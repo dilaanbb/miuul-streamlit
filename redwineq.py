@@ -192,7 +192,7 @@ for col in df.columns:
 
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 
-############################# 1- HEDEF DEĞİŞKEN ANALİZİ #############################
+#############################  HEDEF DEĞİŞKEN ANALİZİ #############################
 
 df["quality_cat_num"] = df["quality_cat"].map({
     "low_quality": 0,
@@ -396,17 +396,6 @@ plt.show(block=True)
 df.apply(lambda x: x.fillna(x.mode()[0]) if (x.dtype == "category" and len(x.unique()) <= 10) else x, axis=0).isnull().sum()
 
 ############################ ENCODING SCALING ############################
-binary_cols = [col for col in df.columns if df[col].dtype not in [int, float]
-               and df[col].nunique() == 2]
-
-df.head()
-#İki sınıflı kategorik değişken olmadığı için label encoder yapamıyoruz.
-
-# İki sınıftan fazla olan kategorik değişkenleri one_hot_encoder' dan geçirme.Alfabetik sıraya göre ilk sınıf silinir,
-# Geriye kalan sınıflar ayrı bir değişken olarak veri setinde yer alır.
-
-df.head()
-
 import pandas as pd
 #col != 'quality' and col != "quality_score"
 
@@ -418,10 +407,10 @@ def one_hot_encoder(dataframe, categorical_cols, drop_first=True):
     return dataframe
 
 df = one_hot_encoder(df, ohe_cols)
-#One hot encoder sonucu oluşan değişkenlerin kaçı anlamlı,rare encoder a bakarım bunun için.
+#One hot encoder sonucu oluşan değişkenlerin kaçı anlamlı,rare encoder'a bakalım.
 df.head()
 
-#Bu türettiğimiz değişkenlerle target arasında anlamlı bir ilişki var mı ona bakarız,rare_analyser ile.
+#Türettiğimiz değişkenlerle target arasında anlamlı bir ilişki var mı ona bakarız,rare_analyser ile.
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 
 df["quality_cat_num"] = df["quality_cat"].map({
@@ -473,6 +462,9 @@ df.drop(columns=drop_cols, axis=1,inplace=True)
 
 df.shape
 df.head()
+
+############################# MACHINE LEARNING #############################
+
 import pandas as pd
 import numpy as np
 
@@ -669,5 +661,3 @@ try:
         shap.summary_plot(shap_values, X_train_scaled, feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)
-
-

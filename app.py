@@ -12,3 +12,4 @@ pg = st.navigation([home_page,analytics_page,predict_page])
 st.set_page_config(layout = "wide",page_title="QualiWine",page_icon="🍷")
 
 pg.run()
+

@@ -21,5 +21,3 @@ streamlit==1.48.0
 catboost==1.2.8
 scikit-surprise==1.1.4
 yellowbrick==1.5
-plotly
-joblib

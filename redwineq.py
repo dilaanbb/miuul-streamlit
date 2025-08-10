@@ -22,7 +22,7 @@ df.head()
 df['quality_cat'] = pd.cut(df['quality'],
                            bins=[2, 4, 6, 9],
                            labels=['low_quality', 'medium_quality', 'high_quality'])
-
+df["quality_cat"].value_counts()
 df["quality"].describe().T
 
 df['total_acidity'] = df['fixed acidity'] + df['volatile acidity'] + df['citric acid'] #Toplam asitlik
@@ -467,80 +467,56 @@ df.head()
 
 import pandas as pd
 import numpy as np
-
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
-from sklearn.preprocessing import StandardScaler, LabelEncoder, label_binarize
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score
-
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-
-from xgboost import XGBClassifier
-
-from imblearn.over_sampling import SMOTE, BorderlineSMOTE
-from imblearn.ensemble import BalancedRandomForestClassifier
-
 import matplotlib.pyplot as plt
 import seaborn as sns
+import shap
+
+from sklearn.preprocessing import LabelEncoder, StandardScaler, label_binarize
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from xgboost import XGBClassifier
+from imblearn.over_sampling import BorderlineSMOTE
+from imblearn.ensemble import BalancedRandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score
+from sklearn.ensemble import StackingClassifier
 
 import joblib
-import shap
-import warnings
+import os
 
-warnings.filterwarnings("ignore", message="resource_tracker: There appear to be .* leaked folder objects to clean up at shutdown")
-warnings.filterwarnings("ignore", message="resource_tracker: .*FileNotFoundError.*")
-
-
-
-# --- 1. Veri Yükleme ve Hedef Değişken Hazırlığı ---
-df = pd.read_csv("datasets/winequality-red.csv")  # Veri seti
-mapping = {
-    3: "low_quality",
-    4: "low_quality",
-    5: "medium_quality",
-    6: "medium_quality",
-    7: "high_quality",
-    8: "high_quality"
-}
-df["quality_cat"] = df["quality"].map(mapping)
-
-X = df.drop(["quality", "quality_cat"], axis=1)
+# --- 1. Veri ve hedef ---
+X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_high"], axis=1)
 y = df["quality_cat"]
-
 
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 
-# --- class_weight sözlüğü ---
-# LabelEncoder sınıflarına göre; örn: 0=high_quality, 1=low_quality, 2=medium_quality
-class_weights = {0: 1, 1: 5, 2: 1}  # low_quality için 5 kat ağırlık
+# --- 2. class_weight ---
+class_weights = {0: 1, 1: 5, 2: 1}  # low_quality için ağırlık artırıldı
 
-# Stratified Train/Test Split
+# --- 3. Stratified train/test split ---
 X_train, X_test, y_train, y_test = train_test_split(
     X, y_encoded, test_size=0.2, stratify=y_encoded, random_state=42
 )
 
-# --- 2. Ölçeklendirme ---
+# --- 4. Ölçeklendirme ---
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# --- 3. Oversampling: SMOTE + BorderlineSMOTE ---
-smote = SMOTE(random_state=42)
+# --- 5. Oversampling (BorderlineSMOTE kullanımı) ---
 border_smote = BorderlineSMOTE(random_state=42, kind='borderline-1')
+X_train_res, y_train_res = border_smote.fit_resample(X_train_scaled, y_train)
 
-X_smote, y_smote = smote.fit_resample(X_train_scaled, y_train)
-X_train_res, y_train_res = border_smote.fit_resample(X_smote, y_smote)
-
-print("SMOTE + BorderlineSMOTE sonrası eğitim seti sınıf dağılımı:")
+print("BorderlineSMOTE sonrası eğitim seti sınıf dağılımı:")
 print(pd.Series(y_train_res).value_counts())
 
-# --- 4. ROC için binarize ---
+# --- 6. ROC için binarize ---
 y_test_bin = label_binarize(y_test, classes=np.unique(y_encoded))
 
-# --- 5. Modeller ---
+# --- 7. Modeller ---
 models = {
     "Logistic Regression": LogisticRegression(max_iter=1000, class_weight=class_weights, random_state=42),
     "Random Forest": RandomForestClassifier(class_weight=class_weights, random_state=42),
@@ -563,7 +539,7 @@ for name, model in models.items():
     auc = roc_auc_score(y_test_bin, y_prob, average="macro", multi_class="ovr")
     results[name] = auc
 
-# --- 6. Hiperparametre Optimizasyonu (Random Forest) ---
+# --- 8. Hiperparametre Optimizasyonu (Random Forest) ---
 rf = RandomForestClassifier(class_weight=class_weights, random_state=42)
 rf_params = {
     'n_estimators': [100, 200, 300],
@@ -574,13 +550,13 @@ rf_params = {
 }
 rf_random = RandomizedSearchCV(
     estimator=rf, param_distributions=rf_params, n_iter=20,
-    cv=3, verbose=2, random_state=42, n_jobs=1
+    cv=3, verbose=2, random_state=42, n_jobs=-1
 )
 rf_random.fit(X_train_res, y_train_res)
 print("Best RF Params:", rf_random.best_params_)
 print("Best RF Score:", rf_random.best_score_)
 
-# --- 7. Stacking Ensemble Model ---
+# --- 9. Stacking Ensemble Model ---
 estimators = [
     ('lr', LogisticRegression(max_iter=1000, class_weight=class_weights, random_state=42)),
     ('rf', RandomForestClassifier(**rf_random.best_params_, class_weight=class_weights, random_state=42)),
@@ -597,42 +573,31 @@ print(classification_report(y_test, y_pred_stack, target_names=le.classes_))
 print("Confusion Matrix:")
 print(confusion_matrix(y_test, y_pred_stack))
 
-# --- 8. ROC AUC Skoru Stacking Model için ---
+# --- 10. ROC AUC Skoru Stacking Model için ---
 y_prob_stack = stacking_clf.predict_proba(X_test_scaled)
 stack_auc = roc_auc_score(y_test_bin, y_prob_stack, average="macro", multi_class="ovr")
 results["Stacking Ensemble"] = stack_auc
 
-# --- 9. Model ROC AUC Skorlarını Yazdır ---
+# --- 11. Model ROC AUC Skorlarını Yazdır ---
 print("\nModel ROC AUC Scores:")
 for name, score in results.items():
     print(f"{name}: {score:.4f}")
 
-# --- 10. En iyi modeli kaydet ---
+# --- 12. En iyi modeli kaydet ---
 best_model_name = max(results, key=results.get)
 if best_model_name == "Stacking Ensemble":
     best_model = stacking_clf
 else:
-    best_model = models.get(best_model_name, stacking_clf)  # default stacking
+    best_model = models[best_model_name]
 
-import os
-import joblib
 if not os.path.exists("models"):
     os.makedirs("models")
 
-print("Current working directory:", os.getcwd())
-print("Models klasörü var mı?", os.path.exists("models"))
-print("Models klasörü içeriği:", os.listdir("models") if os.path.exists("models") else "Yok")
-
-import joblib
-import os
-
 joblib.dump(best_model, f"models/{best_model_name.replace(' ', '_').lower()}_model.pkl")
-joblib.dump(scaler,"models/scaler.pkl")
+joblib.dump(scaler, "models/scaler.pkl")
 joblib.dump(le, "models/label_encoder.pkl")
-import os
-print("Current working directory:", os.getcwd())
 
-# --- 11. Önemli Özellikler (Random Forest için) ---
+# --- 13. Önemli Özellikler (Random Forest için) ---
 if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
     if best_model_name == "Stacking Ensemble":
         rf_model = stacking_clf.named_estimators_['rf']
@@ -645,9 +610,9 @@ if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
         plt.figure(figsize=(10, 6))
         sns.barplot(x=feat_imp.values, y=feat_imp.index)
         plt.title("Feature Importances")
-        plt.show(block=True)
+        plt.show()
 
-# --- 12. SHAP ile Model Yorumlama (Random Forest) ---
+# --- 14. SHAP ile Model Yorumlama (Random Forest) ---
 try:
     if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
         if best_model_name == "Stacking Ensemble":
@@ -657,7 +622,6 @@ try:
 
         explainer = shap.TreeExplainer(rf_model)
         shap_values = explainer.shap_values(X_train_res)
-
-        shap.summary_plot(shap_values, X_train_scaled, feature_names=X.columns)
+        shap.summary_plot(shap_values, X_train_res, feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)

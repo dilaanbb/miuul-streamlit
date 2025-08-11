@@ -15,15 +15,14 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
-df = pd.read_csv("winequality-red.csv",encoding="latin1", sep=";", error_bad_lines=False)
+
+df = pd.read_csv("winequality-red.csv")
+df.head()
 
 ############################# FEATURE ENGINEERING #############################
-df['quality_cat'] = pd.cut(df['quality'],
-                           bins=[2, 4, 6, 9],
-                           labels=['low_quality', 'medium_quality', 'high_quality'])
-df["quality_cat"].value_counts()
-df["quality"].describe().T
-
+# Binary target: quality > 6.5 -> good (1), else bad (0)
+df["quality_binary"] = (df["quality"] > 6.5).astype(int)
+df["quality_binary"].value_counts()
 
 df['alcohol'].describe().T
 df["pH"].describe().T
@@ -147,19 +146,12 @@ for col in df.columns:
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 
 #############################  HEDEF DEĞİŞKEN ANALİZİ #############################
-
-df["quality_cat_num"] = df["quality_cat"].map({
-    "low_quality": 0,
-    "medium_quality": 1,
-    "high_quality": 2
-}).astype("int")
-
 # Hedef Değişkenin Kategorik Değişkenler İle Analizi
 def target_summary_with_cat(dataframe, target, categorical_col):
     print(pd.DataFrame({"TARGET_MEAN": dataframe.groupby(categorical_col,observed=False)[target].mean()}))
 
 for col in cat_cols:
-    target_summary_with_cat(df, "quality_cat_num", col)  # tüm kategorik değişkenler bağımlı değişken ile analize sokuldu.
+    target_summary_with_cat(df, "quality_binary", col)  # tüm kategorik değişkenler bağımlı değişken ile analize sokuldu.
 
 
 # Hedef Değişkenin Sayısal Değişkenler İle Analizi
@@ -168,11 +160,9 @@ def target_summary_with_num(dataframe, target, numerical_col):
 
 # Tüm sayısal değişkenler için quality değişkenine göre ortalama değerleri hesapla
 for col in num_cols:
-    target_summary_with_num(df, "quality_cat_num", col)
+    target_summary_with_num(df, "quality_binary", col)
 
-df.drop("quality_cat_num", axis=1, inplace=True)
 df.head()
-
 ######################### KORELASYON ANALİZİ ###########################
 df.shape
 
@@ -196,20 +186,11 @@ upper_triangle_matrix = cor_matrix.where(np.triu(np.ones(cor_matrix.shape), k=1)
 # 0.90'dan büyük korelasyona sahip sütunları listeye alıyoruz
 drop_list = [col for col in upper_triangle_matrix if any(upper_triangle_matrix[col] > 0.90)]
 
-#Silmeden önce bir bakalım:
-df["quality_cat_num"] = df["quality_cat"].map({
-    "low_quality": 0,
-    "medium_quality": 1,
-    "high_quality": 2
-}).astype("int")
-
-df[drop_list].corrwith(df["quality_cat_num"]).sort_values(ascending=False)
-df.drop("quality_cat_num", axis=1, inplace=True)
-
+df.drop(columns=drop_list, inplace=True)
 df.shape
 df.info()
 df.head()
-
+#hiç %90 üzeri korelasyonlu sütun yok ve dolayısıyla silinecek sütun da yok.
 ############################ AYKIRI DEĞERLERİ YAKALAMA (OUTLIERS) ############################
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 # ALT VE ÜST LİMİT BELİRLENDİ
@@ -348,8 +329,6 @@ plt.show(block=True)
 df.apply(lambda x: x.fillna(x.mode()[0]) if (x.dtype == "category" and len(x.unique()) <= 10) else x, axis=0).isnull().sum()
 
 ############################ ENCODING SCALING ############################
-import pandas as pd
-#col != 'quality' and col != "quality_score"
 
 ohe_cols = [col for col in df.columns if 10 >= df[col].nunique() > 2 and col != 'quality_cat' and col != "quality"]
 # one_hot_encoding sütunları
@@ -365,12 +344,6 @@ df.head()
 #Türettiğimiz değişkenlerle target arasında anlamlı bir ilişki var mı ona bakarız,rare_analyser ile.
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 
-df["quality_cat_num"] = df["quality_cat"].map({
-    "low_quality": 0,
-    "medium_quality": 1,
-    "high_quality": 2
-}).astype("int")
-
 def rare_analyser(dataframe, target, cat_cols):
     for col in cat_cols:
         print(col, ":", len(dataframe[col].value_counts()))
@@ -379,7 +352,7 @@ def rare_analyser(dataframe, target, cat_cols):
                             "TARGET_MEAN": dataframe.groupby(col)[target].mean()}), end="\n\n\n")
 
 
-rare_analyser(df, "quality_cat_num", cat_cols)
+rare_analyser(df, "quality_binary", cat_cols)
 
 def find_useless_binary_cols(dataframe, target, rare_thresh=0.05, effect_thresh=0.1):
     useless = []
@@ -400,7 +373,7 @@ def find_useless_binary_cols(dataframe, target, rare_thresh=0.05, effect_thresh=
                 useless.append(col)
 
     return useless
-useless_cols = find_useless_binary_cols(df, "quality_cat_num")
+useless_cols = find_useless_binary_cols(df, "quality_binary")
 print("Gereksiz sütunlar:", useless_cols)
 df.head()
 
@@ -408,7 +381,6 @@ drop_cols = [
     "alcohol_level_medium",
     "pH_category_optimal",
     "pH_category_basic",
-    "quality_cat_num"
 ]
 
 df.drop(columns=drop_cols, axis=1,inplace=True)
@@ -417,125 +389,175 @@ df.shape
 df.head()
 
 ############################# MACHINE LEARNING #############################
-import pandas as pd
-import numpy as np
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    roc_auc_score,
+    RocCurveDisplay,
+    PrecisionRecallDisplay
+)
 import matplotlib.pyplot as plt
 import seaborn as sns
-import shap
-
-from sklearn.preprocessing import LabelEncoder, StandardScaler, label_binarize
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from xgboost import XGBClassifier
-from imblearn.combine import SMOTETomek
-from imblearn.ensemble import BalancedRandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score, roc_curve
-from sklearn.ensemble import StackingClassifier
-
 import joblib
-import os
+import numpy as np
 
-# --- 1. Feature Engineering ---
-df["acidity_ratio"] = df["fixed acidity"] / (df["volatile acidity"] + 1e-5)
-df["density_alcohol"] = df["density"] * df["alcohol"]
+# 1. Özellik ve hedef değişkenleri ayır
+X = df.drop(columns=["quality", "quality_binary", "alcohol_level_high"])  # quality ve belirttiğin sütunlar hariç
+y = df["quality_binary"]
 
-# --- 2. Veri ve hedef ---
-X = df.drop(["quality", "quality_cat", "alcohol_level_high"], axis=1)
-y = df["quality_cat"]
-
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-
-# --- 3. class_weight ---
-class_weights = {0: 20, 1: 1, 2: 1}
-print("Class weights:", class_weights)
-
-# --- 4. Stratified train/test split ---
+# 2. Eğitim ve test verilerini ayır (stratify ile sınıf dengesini koru)
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y_encoded, test_size=0.2, stratify=y_encoded, random_state=42
+    X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# --- 5. Ölçeklendirme ---
+# 3. Sayısal sütunları seç ve ölçeklendir
+num_cols = [col for col in X_train.columns if X_train[col].dtype in ['int64', 'float64']]
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
 
-# --- 6. Oversampling (SMOTETomek) ---
-smote_tomek = SMOTETomek(random_state=42)
-X_train_res, y_train_res = smote_tomek.fit_resample(X_train_scaled, y_train)
+# Sadece sayısal sütunları ölçeklendir
+X_train.loc[:, num_cols] = scaler.fit_transform(X_train[num_cols])
+X_test.loc[:, num_cols] = scaler.transform(X_test[num_cols])
 
-print("SMOTETomek sonrası eğitim seti sınıf dağılımı:")
-print(pd.Series(y_train_res).value_counts())
+# 4. Hiperparametre aralıkları belirle
 
-# --- 7. ROC için binarize ---
-y_test_bin = label_binarize(y_test, classes=np.unique(y_encoded))
-
-# --- 8. Random Forest Hiperparametre Optimizasyonu ---
-rf = RandomForestClassifier(class_weight=class_weights, random_state=42)
-rf_params = {
-    'n_estimators': [100, 200],
-    'max_depth': [None, 10, 20],
-    'min_samples_split': [2, 5],
-    'min_samples_leaf': [1, 2],
-    'bootstrap': [True, False]
+param_dist_rf = {
+    "n_estimators": [50, 100, 200, 300, 400, 500],
+    "max_depth": [None, 5, 10, 20, 30, 40],
+    "min_samples_split": [2, 5, 10, 15],
+    "min_samples_leaf": [1, 2, 4, 6],
+    "bootstrap": [True, False]
 }
-rf_random = RandomizedSearchCV(
-    estimator=rf, param_distributions=rf_params, n_iter=5,
-    cv=3, verbose=2, random_state=42, n_jobs=-1,
-    scoring='f1_macro'
+
+param_dist_lr = {
+    "C": np.logspace(-4, 4, 20),
+    "penalty": ["l2"],  # 'l1' için solver farklı gerekir
+    "solver": ["lbfgs"],
+    "max_iter": [1000]
+}
+
+param_dist_svm = {
+    "C": np.logspace(-3, 3, 10),
+    "kernel": ["rbf", "linear", "poly"],
+    "gamma": ["scale", "auto"]
+}
+
+# 5. Model nesneleri oluştur
+rf = RandomForestClassifier(random_state=42)
+lr = LogisticRegression(random_state=42, max_iter=1000)
+svm = SVC(probability=True, random_state=42)
+
+# 6. RandomizedSearchCV nesneleri oluştur
+rs_rf = RandomizedSearchCV(
+    rf, param_distributions=param_dist_rf, n_iter=50, cv=5, verbose=2,
+    random_state=42, n_jobs=-1
 )
-rf_random.fit(X_train_res, y_train_res)
-rf_best = rf_random.best_estimator_
-print("Best RF Params:", rf_random.best_params_)
-print("Best RF Score:", rf_random.best_score_)
+rs_lr = RandomizedSearchCV(
+    lr, param_distributions=param_dist_lr, n_iter=20, cv=5, verbose=2,
+    random_state=42, n_jobs=-1
+)
+rs_svm = RandomizedSearchCV(
+    svm, param_distributions=param_dist_svm, n_iter=20, cv=5, verbose=2,
+    random_state=42, n_jobs=-1
+)
 
-# --- 9. ROC Eğrisi ile Threshold Optimizasyonu (low_quality için) ---
-y_prob_rf = rf_best.predict_proba(X_test_scaled)
-fpr, tpr, thresholds = roc_curve(y_test_bin[:, 0], y_prob_rf[:, 0])
-optimal_idx = np.argmax(tpr - fpr)
-optimal_threshold = thresholds[optimal_idx]
-print(f"Optimal threshold for low_quality: {optimal_threshold:.2f}")
+# 7. Hiperparametre optimizasyonlarını sırayla yap
+print("RandomForest hiperparametre optimizasyonu başlıyor...")
+rs_rf.fit(X_train, y_train)
+print("En iyi RF parametreleri:", rs_rf.best_params_)
 
-y_pred_rf_thresh = []
-for probas in y_prob_rf:
-    if probas[0] >= optimal_threshold:
-        y_pred_rf_thresh.append(0)
+print("LogisticRegression hiperparametre optimizasyonu başlıyor...")
+rs_lr.fit(X_train, y_train)
+print("En iyi LR parametreleri:", rs_lr.best_params_)
+
+print("SVM hiperparametre optimizasyonu başlıyor...")
+rs_svm.fit(X_train, y_train)
+print("En iyi SVM parametreleri:", rs_svm.best_params_)
+
+# 8. En iyi modelleri al
+best_rf = rs_rf.best_estimator_
+best_lr = rs_lr.best_estimator_
+best_svm = rs_svm.best_estimator_
+
+# 9. Modelleri bir sözlükte topla
+models = {
+    "RandomForest_Optimized": best_rf,
+    "LogisticRegression_Optimized": best_lr,
+    "SVM_Optimized": best_svm
+}
+
+# 10. Modelleri değerlendir
+for name, model in models.items():
+    print(f"\nModel: {name}")
+
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+
+    # predict_proba metodunun varlığını kontrol et
+    if hasattr(model, "predict_proba"):
+        y_prob = model.predict_proba(X_test)[:, 1]
     else:
-        y_pred_rf_thresh.append(np.argmax(probas[1:]) + 1)
+        # predict_proba yoksa decision_function kullan, veya y_prob'u None yap
+        try:
+            y_prob = model.decision_function(X_test)
+            # decision_function çıktılarını olasılığa dönüştürmek için sigmoid/logistic uygulanabilir
+            # ama basitçe AUC hesaplamak için y_prob kullanılabilir
+        except:
+            y_prob = None
 
-print("\nRandom Forest Threshold Adjusted Classification Report:")
-print(classification_report(y_test, y_pred_rf_thresh, target_names=le.classes_))
-print("Confusion Matrix:")
-print(confusion_matrix(y_test, y_pred_rf_thresh))
+    print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+    print("Classification Report:")
+    print(classification_report(y_test, y_pred))
 
-# --- 10. ROC AUC Skoru ---
-rf_auc_thresh = roc_auc_score(y_test_bin, y_prob_rf, average="macro", multi_class="ovr")
-print(f"\nRandom Forest (Threshold) ROC AUC: {rf_auc_thresh:.4f}")
+    if y_prob is not None:
+        print(f"ROC AUC Score: {roc_auc_score(y_test, y_prob):.4f}")
+    else:
+        print("ROC AUC Score: Hesaplanamadı (predict_proba veya decision_function yok)")
 
-# --- 11. Model Kaydet ---
-if not os.path.exists("models"):
-    os.makedirs("models")
-
-joblib.dump(rf_best, "models/random_forest_model.pkl")
-joblib.dump(scaler, "models/scaler.pkl")
-joblib.dump(le, "models/label_encoder.pkl")
-
-# --- 12. Feature Importances ---
-if hasattr(rf_best, 'feature_importances_'):
-    importances = rf_best.feature_importances_
-    feat_imp = pd.Series(importances, index=X.columns).sort_values(ascending=False)
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x=feat_imp.values, y=feat_imp.index)
-    plt.title("Feature Importances")
+    plt.figure(figsize=(5, 4))
+    sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap='Blues')
+    plt.title(f"{name} Confusion Matrix")
+    plt.ylabel('Actual')
+    plt.xlabel('Predicted')
     plt.show(block=True)
 
-# --- 13. SHAP Analizi (low_quality sınıfı için) ---
-try:
-    explainer = shap.TreeExplainer(rf_best)
-    shap_values = explainer.shap_values(X_train_res)
-    shap.summary_plot(shap_values[0], X_train_res, columns = X.columns)
-except Exception as e:
-    print("SHAP çalıştırılırken hata oluştu:", e)
+    if y_prob is not None:
+        RocCurveDisplay.from_estimator(model, X_test, y_test)
+        plt.title(f"{name} ROC Curve")
+        plt.show(block=True)
+
+        PrecisionRecallDisplay.from_estimator(model, X_test, y_test)
+        plt.title(f"{name} Precision-Recall Curve")
+        plt.show(block=True)
+
+
+# 11. En iyi modeli ve scaler'ı kaydet
+# Burada örnek olarak RandomForest modeli seçildi, istersen skorları karşılaştırıp değiştirebilirsin
+joblib.dump(best_rf, "best_wine_quality_model.pkl")
+joblib.dump(scaler, "scaler.pkl")
+print("En iyi model ve scaler kaydedildi.")
+
+# 12. Overfitting kontrolü için Learning Curve çizimi
+train_sizes, train_scores, test_scores = learning_curve(
+    best_rf, X, y, cv=5,
+    train_sizes=np.linspace(0.1, 1.0, 10),
+    scoring='accuracy',
+    n_jobs=-1
+)
+
+train_mean = train_scores.mean(axis=1)
+test_mean = test_scores.mean(axis=1)
+
+plt.plot(train_sizes, train_mean, label='Training accuracy')
+plt.plot(train_sizes, test_mean, label='Validation accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Training Set Size')
+plt.title('Learning Curve')
+plt.legend()
+plt.show(block=True)

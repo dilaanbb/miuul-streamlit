@@ -441,7 +441,7 @@ import joblib
 import os
 
 # --- 1. Feature Engineering ---
-df["acidity_ratio"] = df["fixed_acidity"] / (df["volatile_acidity"] + 1e-5)
+df["acidity_ratio"] = df["fixed acidity"] / (df["volatile acidity"] + 1e-5)
 df["density_alcohol"] = df["density"] * df["alcohol"]
 
 # --- 2. Veri ve hedef ---

@@ -15,7 +15,7 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
-df = pd.read_csv("datasets/winequality-red.csv")
+df = pd.read_csv("winequality-red.csv")
 df.head()
 
 ############################# FEATURE ENGINEERING #############################
@@ -67,33 +67,7 @@ df.head()
 
 ############################# EDA #############################
 
-def check_def(dataframe, head=5):
-    # DataFrame'in satır ve sütun sayısını gösterir
-    print("####Shape####")
-    print(dataframe.shape)
 
-    # Sütunlardaki veri tiplerini gösterir (int, float, object vb.)
-    print("####Types####")
-    print(dataframe.dtypes)
-
-    # İlk 'head' kadar satırı gösterir
-    print("####Head####")
-    print(dataframe.head(head))
-
-    # Son 'head' kadar satırı gösterir
-    print("####Tail####")
-    print(dataframe.tail(head))
-
-    # Her sütunda kaç adet eksik (NA/null) değer olduğunu gösterir
-    print("####NA####")
-    print(dataframe.isnull().sum())
-
-    # Sayısal değişkenler için çeşitli yüzdelik dilimlere göre özet istatistikler verir
-    print("####Quantiles####")
-    print(dataframe.describe([0, 0.05, 0.50, 0.95, 0.99, 1]).T)
-
-
-check_def(df)
 
 ############################# KATEGORİK DEĞİŞKEN,SAYISAL DEĞİŞKEN ANALİZİ VE GÖRSELLEŞTİRME #############################
 
@@ -257,6 +231,7 @@ drop_list = ['total_acidity', 'acid_balance'] #İki değişkenin etkisi zayıf b
 df.drop(drop_list, axis=1, inplace=True)
 df.shape
 df.info()
+df.head()
 
 ############################ AYKIRI DEĞERLERİ YAKALAMA (OUTLIERS) ############################
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
@@ -464,7 +439,6 @@ df.shape
 df.head()
 
 ############################# MACHINE LEARNING #############################
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -478,7 +452,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
-from imblearn.over_sampling import BorderlineSMOTE
+from imblearn.combine import SMOTEENN
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score
 from sklearn.ensemble import StackingClassifier
@@ -487,14 +461,17 @@ import joblib
 import os
 
 # --- 1. Veri ve hedef ---
-X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_high"], axis=1)
+X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_medium", "pH_category_optimal", "pH_category_basic"], axis=1)
 y = df["quality_cat"]
 
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 
 # --- 2. class_weight ---
-class_weights = {0: 1, 1: 5, 2: 1}  # low_quality için ağırlık artırıldı
+# low_quality'nin encoded label'ı 0 varsayımıyla:
+class_weights = {0: 10, 1: 1, 2: 1}
+
+print("Class weights:", class_weights)
 
 # --- 3. Stratified train/test split ---
 X_train, X_test, y_train, y_test = train_test_split(
@@ -506,11 +483,11 @@ scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# --- 5. Oversampling (BorderlineSMOTE kullanımı) ---
-border_smote = BorderlineSMOTE(random_state=42, kind='borderline-1')
-X_train_res, y_train_res = border_smote.fit_resample(X_train_scaled, y_train)
+# --- 5. Oversampling (SMOTEENN kullanımı) ---
+smote_enn = SMOTEENN(random_state=42)
+X_train_res, y_train_res = smote_enn.fit_resample(X_train_scaled, y_train)
 
-print("BorderlineSMOTE sonrası eğitim seti sınıf dağılımı:")
+print("SMOTEENN sonrası eğitim seti sınıf dağılımı:")
 print(pd.Series(y_train_res).value_counts())
 
 # --- 6. ROC için binarize ---
@@ -550,7 +527,8 @@ rf_params = {
 }
 rf_random = RandomizedSearchCV(
     estimator=rf, param_distributions=rf_params, n_iter=20,
-    cv=3, verbose=2, random_state=42, n_jobs=-1
+    cv=3, verbose=2, random_state=42, n_jobs=-1,
+    scoring='f1_macro'  # Optimize ederken f1_macro kullanımı
 )
 rf_random.fit(X_train_res, y_train_res)
 print("Best RF Params:", rf_random.best_params_)
@@ -567,26 +545,43 @@ stacking_clf = StackingClassifier(
     final_estimator=XGBClassifier(eval_metric='mlogloss', use_label_encoder=False, random_state=42)
 )
 stacking_clf.fit(X_train_res, y_train_res)
-y_pred_stack = stacking_clf.predict(X_test_scaled)
-print(f"\nStacking Ensemble Accuracy: {accuracy_score(y_test, y_pred_stack):.4f}")
-print(classification_report(y_test, y_pred_stack, target_names=le.classes_))
-print("Confusion Matrix:")
-print(confusion_matrix(y_test, y_pred_stack))
 
-# --- 10. ROC AUC Skoru Stacking Model için ---
+# --- 10. Threshold optimizasyonu (stacking için) ---
 y_prob_stack = stacking_clf.predict_proba(X_test_scaled)
+y_pred_stack_threshold = []
+threshold_low_quality = 0.3  # Low_quality için daha düşük eşik
+
+for probas in y_prob_stack:
+    if probas[0] >= threshold_low_quality:
+        y_pred_stack_threshold.append(0)
+    else:
+        # Diğer iki sınıftan en yükseği seç
+        if probas[1] > probas[2]:
+            y_pred_stack_threshold.append(1)
+        else:
+            y_pred_stack_threshold.append(2)
+
+print(f"\nStacking Ensemble Accuracy (default threshold): {accuracy_score(y_test, stacking_clf.predict(X_test_scaled)):.4f}")
+print("\nStacking Ensemble Threshold Adjusted Classification Report:")
+print(classification_report(y_test, y_pred_stack_threshold, target_names=le.classes_))
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred_stack_threshold))
+
+# --- 11. ROC AUC Skoru Stacking Model için ---
 stack_auc = roc_auc_score(y_test_bin, y_prob_stack, average="macro", multi_class="ovr")
 results["Stacking Ensemble"] = stack_auc
 
-# --- 11. Model ROC AUC Skorlarını Yazdır ---
+# --- 12. Model ROC AUC Skorlarını Yazdır ---
 print("\nModel ROC AUC Scores:")
 for name, score in results.items():
     print(f"{name}: {score:.4f}")
 
-# --- 12. En iyi modeli kaydet ---
+# --- 13. En iyi modeli kaydet ---
 best_model_name = max(results, key=results.get)
 if best_model_name == "Stacking Ensemble":
     best_model = stacking_clf
+elif best_model_name == "Random Forest":
+    best_model = rf_random.best_estimator_
 else:
     best_model = models[best_model_name]
 
@@ -597,7 +592,7 @@ joblib.dump(best_model, f"models/{best_model_name.replace(' ', '_').lower()}_mod
 joblib.dump(scaler, "models/scaler.pkl")
 joblib.dump(le, "models/label_encoder.pkl")
 
-# --- 13. Önemli Özellikler (Random Forest için) ---
+# --- 14. Önemli Özellikler (Random Forest için) ---
 if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
     if best_model_name == "Stacking Ensemble":
         rf_model = stacking_clf.named_estimators_['rf']
@@ -610,9 +605,9 @@ if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
         plt.figure(figsize=(10, 6))
         sns.barplot(x=feat_imp.values, y=feat_imp.index)
         plt.title("Feature Importances")
-        plt.show()
+        plt.show(block=True)
 
-# --- 14. SHAP ile Model Yorumlama (Random Forest) ---
+# --- 15. SHAP ile Model Yorumlama (Random Forest) ---
 try:
     if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
         if best_model_name == "Stacking Ensemble":
@@ -625,3 +620,7 @@ try:
         shap.summary_plot(shap_values, X_train_res, feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)
+
+# --- 16. (Opsiyonel) Eğer varsa fonksiyonları ve diğer kod parçalarını da dahil et ---
+# Örneğin:
+# cat_cols, num_cols, cat_but_car = grab_col_names(df)

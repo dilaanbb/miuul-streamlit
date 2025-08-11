@@ -434,67 +434,48 @@ from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
 from imblearn.combine import SMOTETomek
 from imblearn.ensemble import BalancedRandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score, roc_curve
 from sklearn.ensemble import StackingClassifier
 
 import joblib
 import os
 
-# --- 1. Veri ve hedef ---
+# --- 1. Feature Engineering ---
+df["acidity_ratio"] = df["fixed_acidity"] / (df["volatile_acidity"] + 1e-5)
+df["density_alcohol"] = df["density"] * df["alcohol"]
+
+# --- 2. Veri ve hedef ---
 X = df.drop(["quality", "quality_cat", "alcohol_level_high"], axis=1)
 y = df["quality_cat"]
 
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 
-# --- 2. class_weight ---
-class_weights = {0: 10, 1: 1, 2: 1}
+# --- 3. class_weight ---
+class_weights = {0: 20, 1: 1, 2: 1}
 print("Class weights:", class_weights)
 
-# --- 3. Stratified train/test split ---
+# --- 4. Stratified train/test split ---
 X_train, X_test, y_train, y_test = train_test_split(
     X, y_encoded, test_size=0.2, stratify=y_encoded, random_state=42
 )
 
-# --- 4. Ölçeklendirme ---
+# --- 5. Ölçeklendirme ---
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# --- 5. Oversampling (SMOTETomek kullanımı) ---
+# --- 6. Oversampling (SMOTETomek) ---
 smote_tomek = SMOTETomek(random_state=42)
 X_train_res, y_train_res = smote_tomek.fit_resample(X_train_scaled, y_train)
 
 print("SMOTETomek sonrası eğitim seti sınıf dağılımı:")
 print(pd.Series(y_train_res).value_counts())
 
-# --- 6. ROC için binarize ---
+# --- 7. ROC için binarize ---
 y_test_bin = label_binarize(y_test, classes=np.unique(y_encoded))
 
-# --- 7. Modeller ---
-models = {
-    "Logistic Regression": LogisticRegression(max_iter=1000, class_weight=class_weights, random_state=42),
-    "Random Forest": RandomForestClassifier(class_weight=class_weights, random_state=42),
-    "SVM": SVC(probability=True, class_weight=class_weights, random_state=42),
-    "KNN": KNeighborsClassifier(),
-    "XGBoost": XGBClassifier(eval_metric='mlogloss', random_state=42),
-    "Balanced RF": BalancedRandomForestClassifier(random_state=42)
-}
-
-results = {}
-
-for name, model in models.items():
-    model.fit(X_train_res, y_train_res)
-    y_pred = model.predict(X_test_scaled)
-    y_prob = model.predict_proba(X_test_scaled)
-    print(f"\n{name} Classification Report:")
-    print(classification_report(y_test, y_pred, target_names=le.classes_))
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-    auc = roc_auc_score(y_test_bin, y_prob, average="macro", multi_class="ovr")
-    results[name] = auc
-
-# --- 8. Hiperparametre Optimizasyonu (Random Forest) ---
+# --- 8. Random Forest Hiperparametre Optimizasyonu ---
 rf = RandomForestClassifier(class_weight=class_weights, random_state=42)
 rf_params = {
     'n_estimators': [100, 200],
@@ -509,17 +490,20 @@ rf_random = RandomizedSearchCV(
     scoring='f1_macro'
 )
 rf_random.fit(X_train_res, y_train_res)
+rf_best = rf_random.best_estimator_
 print("Best RF Params:", rf_random.best_params_)
 print("Best RF Score:", rf_random.best_score_)
 
-# --- 9. Threshold optimizasyonu (Random Forest) ---
-rf_best = rf_random.best_estimator_
+# --- 9. ROC Eğrisi ile Threshold Optimizasyonu (low_quality için) ---
 y_prob_rf = rf_best.predict_proba(X_test_scaled)
-threshold_low_quality = 0.3
-y_pred_rf_thresh = []
+fpr, tpr, thresholds = roc_curve(y_test_bin[:, 0], y_prob_rf[:, 0])
+optimal_idx = np.argmax(tpr - fpr)
+optimal_threshold = thresholds[optimal_idx]
+print(f"Optimal threshold for low_quality: {optimal_threshold:.2f}")
 
+y_pred_rf_thresh = []
 for probas in y_prob_rf:
-    if probas[0] >= threshold_low_quality:
+    if probas[0] >= optimal_threshold:
         y_pred_rf_thresh.append(0)
     else:
         y_pred_rf_thresh.append(np.argmax(probas[1:]) + 1)
@@ -529,39 +513,31 @@ print(classification_report(y_test, y_pred_rf_thresh, target_names=le.classes_))
 print("Confusion Matrix:")
 print(confusion_matrix(y_test, y_pred_rf_thresh))
 
-# --- 10. ROC AUC Skoru Threshold RF için ---
+# --- 10. ROC AUC Skoru ---
 rf_auc_thresh = roc_auc_score(y_test_bin, y_prob_rf, average="macro", multi_class="ovr")
-results["Random Forest (Threshold)"] = rf_auc_thresh
+print(f"\nRandom Forest (Threshold) ROC AUC: {rf_auc_thresh:.4f}")
 
-# --- 11. Model ROC AUC Skorlarını Yazdır ---
-print("\nModel ROC AUC Scores:")
-for name, score in results.items():
-    print(f"{name}: {score:.4f}")
-
-# --- 12. En iyi modeli kaydet ---
-best_model_name = max(results, key=results.get)
-best_model = rf_best if "Random Forest" in best_model_name else models[best_model_name]
-
+# --- 11. Model Kaydet ---
 if not os.path.exists("models"):
     os.makedirs("models")
 
-joblib.dump(best_model, f"models/{best_model_name.replace(' ', '_').lower()}_model.pkl")
+joblib.dump(rf_best, "models/random_forest_model.pkl")
 joblib.dump(scaler, "models/scaler.pkl")
 joblib.dump(le, "models/label_encoder.pkl")
 
-# --- 13. Önemli Özellikler (Random Forest için) ---
-if hasattr(best_model, 'feature_importances_'):
-    importances = best_model.feature_importances_
+# --- 12. Feature Importances ---
+if hasattr(rf_best, 'feature_importances_'):
+    importances = rf_best.feature_importances_
     feat_imp = pd.Series(importances, index=X.columns).sort_values(ascending=False)
     plt.figure(figsize=(10, 6))
     sns.barplot(x=feat_imp.values, y=feat_imp.index)
     plt.title("Feature Importances")
     plt.show()
 
-# --- 14. SHAP ile Model Yorumlama (Random Forest) ---
+# --- 13. SHAP Analizi (low_quality sınıfı için) ---
 try:
-    explainer = shap.TreeExplainer(best_model)
+    explainer = shap.TreeExplainer(rf_best)
     shap_values = explainer.shap_values(X_train_res[:100])
-    shap.summary_plot(shap_values, X_train_res[:100], feature_names=X.columns)
+    shap.summary_plot(shap_values[0], X_train_res[:100], feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)

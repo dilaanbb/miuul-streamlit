@@ -1,16 +1,6 @@
 import pandas as pd
 import streamlit as st
 
-# Kaliteyi sınıflara ayıran harita
-mapping = {
-    3: "low_quality",
-    4: "low_quality",
-    5: "medium_quality",
-    6: "medium_quality",
-    7: "high_quality",
-    8: "high_quality"
-}
-
 # Özellik adları
 feature_names = [
     'fixed acidity', 'volatile acidity', 'citric acid', 'residual sugar',
@@ -21,17 +11,11 @@ feature_names = [
 # Veri setini yükleyip işleyen yardımcı fonksiyon
 @st.cache_data
 def get_data():
-    df = pd.read_csv("winequality-red.csv")
-    df.dropna(inplace=True)  # Eksik verileri at
-    df["quality_cat"] = df["quality"].map(mapping)  # Kalite kategorisi ekle
+    df = pd.read_csv("winequality-red-processed.csv")
+    df.dropna(inplace=True)  # Eksik verileri kaldır
     return df
 
-# Kalite değerini string etikete dönüştüren yardımcı fonksiyon (opsiyonel)
+# Tahmin değerini etikete dönüştüren yardımcı fonksiyon (binary versiyon)
 def map_prediction_to_label(pred_int):
-    label_map = ["low_quality", "medium_quality", "high_quality"]
-    if 0 <= pred_int < len(label_map):
-        return label_map[pred_int]
-    return "unknown"
-
-
-
+    label_map = {0: "Low Quality", 1: "High Quality"}
+    return label_map.get(pred_int, "Unknown")

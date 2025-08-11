@@ -16,7 +16,7 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
 
-df = pd.read_csv("winequality-red.csv")
+df = pd.read_csv("datasets/winequality-red.csv")
 df.head()
 
 ############################# FEATURE ENGINEERING #############################
@@ -386,7 +386,8 @@ drop_cols = [
 df.drop(columns=drop_cols, axis=1,inplace=True)
 
 df.shape
-df.head()
+df.to_csv("datasets/winequality-red-processed.csv", index=False)
+
 
 ############################# MACHINE LEARNING #############################
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve

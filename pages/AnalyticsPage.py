@@ -1,111 +1,89 @@
-import os
-import sys
+import streamlit as st
 import plotly.express as px
 from helper import get_data
-import streamlit as st
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 df = get_data()
 
-st.title("📊 Analiz Sayfası")
-st.write("Veri seti aşağıda görüntülenmektedir:")
-st.dataframe(df)
+st.title("📊 Şarap Kalitesi Veri Analizi")
 
-avg_fixed_acidity = df["fixed acidity"].mean()
-avg_volatile_acidity = df["volatile acidity"].mean()
-avg_citric_acid = df["citric acid"].mean()
-avg_residual_sugar = df["residual sugar"].mean()
-avg_chlorides = df["chlorides"].mean()
-avg_free_sulfur_dioxide = df["free sulfur dioxide"].mean()
-avg_total_sulfur_dioxide = df["total sulfur dioxide"].mean()
-avg_density = df["density"].mean()
-avg_pH = df["pH"].mean()
-avg_sulphates = df["sulphates"].mean()
-avg_alcohol = df["alcohol"].mean()
-
-st.subheader("📌Temel Öznitelikler")
-
-col1,col2,col3,col4,\
-    col5,col6,col7,col8,col9,col10,col11= st.columns(11)
-col1.metric("Average Fixed Acidity",f"{avg_fixed_acidity:.2f}")
-col2.metric("Average Volatile Acidity",f"{avg_volatile_acidity:.2f}")
-col3.metric("Average Citric Acid",f"{avg_citric_acid:.2f}")
-col4.metric("Average Residual Sugar",f"{avg_residual_sugar:.2f}")
-col5.metric("Average Chlorides",f"{avg_chlorides:.2f}")
-col6.metric("Average Free Sulfur Dioxide",f"{avg_free_sulfur_dioxide:.2f}")
-col7.metric("Average Total Sulfur Dioxide",f"{avg_total_sulfur_dioxide:.2f}")
-col8.metric("Average Density",f"{avg_density:.2f}")
-col9.metric("Average pH",f"{avg_pH:.2f}")
-col10.metric("Average Sulphates",f"{avg_sulphates:.2f}")
-col11.metric("Average Alcohol",f"{avg_alcohol:.2f}")
+# 1. Kalite Dağılımı (Bar Chart)
+st.subheader("Şarap Kalite Dağılımı")
+quality_counts = df["quality_binary"].value_counts().rename({0: "Düşük Kalite", 1: "Yüksek Kalite"})
+fig_quality = px.bar(
+    x=quality_counts.index,
+    y=quality_counts.values,
+    labels={"x": "Kalite Sınıfı", "y": "Şarap Sayısı"},
+    text=quality_counts.values,
+    title="Şarap Kalite Sınıfına Göre Dağılım"
+)
+fig_quality.update_traces(textposition="outside")
+st.plotly_chart(fig_quality)
 
 st.markdown("---")
 
-# Scatterplot
-# Scatterplot
-st.subheader("Scatterplot: Değişkenler Arası İlişki")
-x_var = st.selectbox(
-    "X ekseni değişkeni",
-    df.columns,
-    index=df.columns.get_loc("alcohol"),
-    key="scatter_x"
+# 2. Alkol Seviyesi vs Kalite (Box Plot)
+st.subheader("Alkol Miktarının Kaliteye Etkisi")
+fig_alcohol_quality = px.box(
+    df,
+    x="quality_binary",
+    y="alcohol",
+    labels={"quality_binary": "Kalite (0=Düşük, 1=Yüksek)", "alcohol": "Alkol (%)"},
+    title="Alkol Seviyesi ile Şarap Kalitesi Arasındaki Fark"
 )
-y_var = st.selectbox(
-    "Y ekseni değişkeni",
-    df.columns,
-    index=df.columns.get_loc("fixed acidity"),
-    key="scatter_y"
+st.plotly_chart(fig_alcohol_quality)
+
+st.markdown("---")
+
+# 3. Korelasyon Isı Haritası
+st.subheader("Özellikler Arasındaki Korelasyon")
+numeric_cols = df.select_dtypes(include=["float64", "int64"]).columns
+corr = df[numeric_cols].corr()
+fig_corr = px.imshow(
+    corr,
+    labels=dict(x="Özellikler", y="Özellikler", color="Korelasyon"),
+    x=corr.columns,
+    y=corr.columns,
+    color_continuous_scale="RdBu",
+    title="Sayısal Özellikler Arası Korelasyon Matrisi"
 )
-color_var = st.selectbox(
-    "Renk (opsiyonel)",
-    [None] + list(df.columns),
-    index=1,
-    key="scatter_color"
-)
+st.plotly_chart(fig_corr)
+
+st.markdown("---")
+
+# 4. pH Kategorileri ve Kalite (Bar Plot)
+st.subheader("pH Kategorisi ve Kalite İlişkisi")
+if "pH_category" in df.columns:
+    ph_quality = df.groupby(["pH_category", "quality_binary"]).size().reset_index(name="count")
+    ph_quality["Kalite"] = ph_quality["quality_binary"].map({0: "Düşük", 1: "Yüksek"})
+
+    fig_ph_quality = px.bar(
+        ph_quality,
+        x="pH_category",
+        y="count",
+        color="Kalite",
+        barmode="group",
+        labels={"pH_category": "pH Kategorisi", "count": "Şarap Sayısı"},
+        title="pH Kategorilerine Göre Kalite Dağılımı"
+    )
+    st.plotly_chart(fig_ph_quality)
+else:
+    st.info("pH kategorileri verisinde eksik.")
+
+st.markdown("---")
+
+# 5. Özellikler Arası Scatterplot (Seçilebilir)
+st.subheader("Özellikler Arası İlişki İncelemesi")
+cols_for_scatter = numeric_cols.drop("quality_binary") if "quality_binary" in numeric_cols else numeric_cols
+x_col = st.selectbox("X Ekseni", options=cols_for_scatter, index=cols_for_scatter.get_loc("alcohol") if "alcohol" in cols_for_scatter else 0)
+y_col = st.selectbox("Y Ekseni", options=cols_for_scatter, index=cols_for_scatter.get_loc("fixed acidity") if "fixed acidity" in cols_for_scatter else 1)
+color_col = st.selectbox("Renk (Kalite)", options=["None", "quality_binary"], index=1 if "quality_binary" in numeric_cols else 0)
 
 fig_scatter = px.scatter(
     df,
-    x=x_var,
-    y=y_var,
-    color=color_var if color_var else None,
-    hover_data=[x_var, y_var],
-    title=f"{x_var} vs {y_var}"
+    x=x_col,
+    y=y_col,
+    color=df[color_col] if color_col != "None" else None,
+    labels={x_col: x_col.title(), y_col: y_col.title()},
+    title=f"{x_col.title()} vs {y_col.title()}"
 )
 st.plotly_chart(fig_scatter)
-
-
-st.markdown("---")
-
-# Histogram bölümü
-st.subheader("Histogram: Dağılım Analizi")
-hist_var = st.selectbox(
-    "Histogram değişkeni",
-    df.columns,
-    index=df.columns.get_loc("alcohol"),
-    key="hist_var"
-)
-color_var_hist = st.selectbox(
-    "Renk (opsiyonel)",
-    [None] + list(df.columns),
-    index=1,
-    key="hist_color"
-)
-bins = st.slider(
-    "Bin sayısı",
-    5,
-    50,
-    20,
-    key="hist_bins"
-)
-
-fig_hist = px.histogram(
-    df,
-    x=hist_var,
-    color=color_var_hist if color_var_hist else None,
-    nbins=bins,
-    marginal="box",
-    title=f"{hist_var} Dağılımı"
-)
-st.plotly_chart(fig_hist)

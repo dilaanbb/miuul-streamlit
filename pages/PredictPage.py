@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 base_dir = os.path.dirname(current_dir)
 models_dir = os.path.join(base_dir, "models")
 
-model_path = os.path.join(models_dir, "balanced_rf_model.pkl")
+model_path = os.path.join(models_dir, "best_wine_quality_model.pkl")
 scaler_path = os.path.join(models_dir, "scaler.pkl")
 le_path = os.path.join(models_dir, "label_encoder.pkl")
 

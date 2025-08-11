@@ -420,7 +420,7 @@ df.head()
 
 ############################# MACHINE LEARNING #############################
 import pandas as pd
-import numpy as  np
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
@@ -432,7 +432,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
-from imblearn.combine import SMOTEENN
+from imblearn.combine import SMOTETomek
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, accuracy_score
 from sklearn.ensemble import StackingClassifier
@@ -441,16 +441,14 @@ import joblib
 import os
 
 # --- 1. Veri ve hedef ---
-X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_high"], axis=1)
+X = df.drop(["quality", "quality_cat", "alcohol_level_high"], axis=1)
 y = df["quality_cat"]
 
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 
 # --- 2. class_weight ---
-# low_quality'nin encoded label'ı 0 varsayımıyla:
 class_weights = {0: 10, 1: 1, 2: 1}
-
 print("Class weights:", class_weights)
 
 # --- 3. Stratified train/test split ---
@@ -463,11 +461,11 @@ scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# --- 5. Oversampling (SMOTEENN kullanımı) ---
-smote_enn = SMOTEENN(random_state=42)
-X_train_res, y_train_res = smote_enn.fit_resample(X_train_scaled, y_train)
+# --- 5. Oversampling (SMOTETomek kullanımı) ---
+smote_tomek = SMOTETomek(random_state=42)
+X_train_res, y_train_res = smote_tomek.fit_resample(X_train_scaled, y_train)
 
-print("SMOTEENN sonrası eğitim seti sınıf dağılımı:")
+print("SMOTETomek sonrası eğitim seti sınıf dağılımı:")
 print(pd.Series(y_train_res).value_counts())
 
 # --- 6. ROC için binarize ---
@@ -479,7 +477,7 @@ models = {
     "Random Forest": RandomForestClassifier(class_weight=class_weights, random_state=42),
     "SVM": SVC(probability=True, class_weight=class_weights, random_state=42),
     "KNN": KNeighborsClassifier(),
-    "XGBoost": XGBClassifier(eval_metric='mlogloss', use_label_encoder=False, random_state=42),
+    "XGBoost": XGBClassifier(eval_metric='mlogloss', random_state=42),
     "Balanced RF": BalancedRandomForestClassifier(random_state=42)
 }
 
@@ -499,71 +497,50 @@ for name, model in models.items():
 # --- 8. Hiperparametre Optimizasyonu (Random Forest) ---
 rf = RandomForestClassifier(class_weight=class_weights, random_state=42)
 rf_params = {
-    'n_estimators': [100, 200, 300],
-    'max_depth': [None, 10, 20, 30],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4],
+    'n_estimators': [100, 200],
+    'max_depth': [None, 10, 20],
+    'min_samples_split': [2, 5],
+    'min_samples_leaf': [1, 2],
     'bootstrap': [True, False]
 }
 rf_random = RandomizedSearchCV(
-    estimator=rf, param_distributions=rf_params, n_iter=20,
+    estimator=rf, param_distributions=rf_params, n_iter=5,
     cv=3, verbose=2, random_state=42, n_jobs=-1,
-    scoring='f1_macro'  # Optimize ederken f1_macro kullanımı
+    scoring='f1_macro'
 )
 rf_random.fit(X_train_res, y_train_res)
 print("Best RF Params:", rf_random.best_params_)
 print("Best RF Score:", rf_random.best_score_)
 
-# --- 9. Stacking Ensemble Model ---
-estimators = [
-    ('lr', LogisticRegression(max_iter=1000, class_weight=class_weights, random_state=42)),
-    ('rf', RandomForestClassifier(**rf_random.best_params_, class_weight=class_weights, random_state=42)),
-    ('svc', SVC(probability=True, class_weight=class_weights, random_state=42))
-]
-stacking_clf = StackingClassifier(
-    estimators=estimators,
-    final_estimator=XGBClassifier(eval_metric='mlogloss', use_label_encoder=False, random_state=42)
-)
-stacking_clf.fit(X_train_res, y_train_res)
+# --- 9. Threshold optimizasyonu (Random Forest) ---
+rf_best = rf_random.best_estimator_
+y_prob_rf = rf_best.predict_proba(X_test_scaled)
+threshold_low_quality = 0.3
+y_pred_rf_thresh = []
 
-# --- 10. Threshold optimizasyonu (stacking için) ---
-y_prob_stack = stacking_clf.predict_proba(X_test_scaled)
-y_pred_stack_threshold = []
-threshold_low_quality = 0.3  # Low_quality için daha düşük eşik
-
-for probas in y_prob_stack:
+for probas in y_prob_rf:
     if probas[0] >= threshold_low_quality:
-        y_pred_stack_threshold.append(0)
+        y_pred_rf_thresh.append(0)
     else:
-        # Diğer iki sınıftan en yükseği seç
-        if probas[1] > probas[2]:
-            y_pred_stack_threshold.append(1)
-        else:
-            y_pred_stack_threshold.append(2)
+        y_pred_rf_thresh.append(np.argmax(probas[1:]) + 1)
 
-print(f"\nStacking Ensemble Accuracy (default threshold): {accuracy_score(y_test, stacking_clf.predict(X_test_scaled)):.4f}")
-print("\nStacking Ensemble Threshold Adjusted Classification Report:")
-print(classification_report(y_test, y_pred_stack_threshold, target_names=le.classes_))
+print("\nRandom Forest Threshold Adjusted Classification Report:")
+print(classification_report(y_test, y_pred_rf_thresh, target_names=le.classes_))
 print("Confusion Matrix:")
-print(confusion_matrix(y_test, y_pred_stack_threshold))
+print(confusion_matrix(y_test, y_pred_rf_thresh))
 
-# --- 11. ROC AUC Skoru Stacking Model için ---
-stack_auc = roc_auc_score(y_test_bin, y_prob_stack, average="macro", multi_class="ovr")
-results["Stacking Ensemble"] = stack_auc
+# --- 10. ROC AUC Skoru Threshold RF için ---
+rf_auc_thresh = roc_auc_score(y_test_bin, y_prob_rf, average="macro", multi_class="ovr")
+results["Random Forest (Threshold)"] = rf_auc_thresh
 
-# --- 12. Model ROC AUC Skorlarını Yazdır ---
+# --- 11. Model ROC AUC Skorlarını Yazdır ---
 print("\nModel ROC AUC Scores:")
 for name, score in results.items():
     print(f"{name}: {score:.4f}")
 
-# --- 13. En iyi modeli kaydet ---
+# --- 12. En iyi modeli kaydet ---
 best_model_name = max(results, key=results.get)
-if best_model_name == "Stacking Ensemble":
-    best_model = stacking_clf
-elif best_model_name == "Random Forest":
-    best_model = rf_random.best_estimator_
-else:
-    best_model = models[best_model_name]
+best_model = rf_best if "Random Forest" in best_model_name else models[best_model_name]
 
 if not os.path.exists("models"):
     os.makedirs("models")
@@ -572,31 +549,19 @@ joblib.dump(best_model, f"models/{best_model_name.replace(' ', '_').lower()}_mod
 joblib.dump(scaler, "models/scaler.pkl")
 joblib.dump(le, "models/label_encoder.pkl")
 
-# --- 14. Önemli Özellikler (Random Forest için) ---
-if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
-    if best_model_name == "Stacking Ensemble":
-        rf_model = stacking_clf.named_estimators_['rf']
-    else:
-        rf_model = best_model
+# --- 13. Önemli Özellikler (Random Forest için) ---
+if hasattr(best_model, 'feature_importances_'):
+    importances = best_model.feature_importances_
+    feat_imp = pd.Series(importances, index=X.columns).sort_values(ascending=False)
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=feat_imp.values, y=feat_imp.index)
+    plt.title("Feature Importances")
+    plt.show()
 
-    if hasattr(rf_model, 'feature_importances_'):
-        importances = rf_model.feature_importances_
-        feat_imp = pd.Series(importances, index=X.columns).sort_values(ascending=False)
-        plt.figure(figsize=(10, 6))
-        sns.barplot(x=feat_imp.values, y=feat_imp.index)
-        plt.title("Feature Importances")
-        plt.show(block=True)
-
-# --- 15. SHAP ile Model Yorumlama (Random Forest) ---
+# --- 14. SHAP ile Model Yorumlama (Random Forest) ---
 try:
-    if best_model_name in ["Random Forest", "Balanced RF", "Stacking Ensemble"]:
-        if best_model_name == "Stacking Ensemble":
-            rf_model = stacking_clf.named_estimators_['rf']
-        else:
-            rf_model = best_model
-
-        explainer = shap.TreeExplainer(rf_model)
-        shap_values = explainer.shap_values(X_train_res)
-        shap.summary_plot(shap_values, X_train_res, feature_names=X.columns)
+    explainer = shap.TreeExplainer(best_model)
+    shap_values = explainer.shap_values(X_train_res[:100])
+    shap.summary_plot(shap_values, X_train_res[:100], feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)

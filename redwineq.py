@@ -15,34 +15,16 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
-df = pd.read_csv("winequality-red.csv")
-df.head()
-
+try:
+    df = pd.read_csv("datasets/winequality-red.csv", encoding="utf-8")
+except UnicodeDecodeError:
+    df = pd.read_csv("datasets/winequality-red.csv", encoding="latin1")
 ############################# FEATURE ENGINEERING #############################
 df['quality_cat'] = pd.cut(df['quality'],
                            bins=[2, 4, 6, 9],
                            labels=['low_quality', 'medium_quality', 'high_quality'])
 df["quality_cat"].value_counts()
 df["quality"].describe().T
-
-df['total_acidity'] = df['fixed acidity'] + df['volatile acidity'] + df['citric acid'] #Toplam asitlik
-df.groupby('quality_cat',observed=False)['total_acidity'].mean()
-
-
-df['acid_balance'] = df["total_acidity"] / df["pH"] #Asidite dengesi,asidite-ph dengesi,acid_balance yüksekse iyi kalite
-df.groupby('quality_cat',observed=False)['acid_balance'].mean()
-
-df["aroma_risk"] = df["volatile acidity"] + df["chlorides"] + df["total sulfur dioxide"]/100 #Aroma üzerinde olumsuz etki yaratacak değişkenler
-#Yüksekse kalite olumsuz etkilenir.
-df.groupby('quality_cat',observed=False)['aroma_risk'].mean()
-
-
-df["sulfate_boost"] = df["sulphates"] * df["alcohol"] #Sülfat ve alkol birlikte kaliteyi artırabilir.
-df.groupby('quality_cat',observed=False)['sulfate_boost'].mean()
-
-
-df["quality_score"] = (df["alcohol"] + df["citric acid"] +df["sulphates"]) - (df["volatile acidity"] + df["chlorides"] + df["pH"])
-df.groupby('quality_cat',observed=False)['quality_score'].mean()
 
 
 df['alcohol'].describe().T
@@ -226,9 +208,6 @@ df["quality_cat_num"] = df["quality_cat"].map({
 df[drop_list].corrwith(df["quality_cat_num"]).sort_values(ascending=False)
 df.drop("quality_cat_num", axis=1, inplace=True)
 
-
-drop_list = ['total_acidity', 'acid_balance'] #İki değişkenin etkisi zayıf bu yüzden bunları sildik.
-df.drop(drop_list, axis=1, inplace=True)
 df.shape
 df.info()
 df.head()
@@ -425,6 +404,7 @@ def find_useless_binary_cols(dataframe, target, rare_thresh=0.05, effect_thresh=
     return useless
 useless_cols = find_useless_binary_cols(df, "quality_cat_num")
 print("Gereksiz sütunlar:", useless_cols)
+df.head()
 
 drop_cols = [
     "alcohol_level_medium",
@@ -440,7 +420,7 @@ df.head()
 
 ############################# MACHINE LEARNING #############################
 import pandas as pd
-import numpy as np
+import numpy as  np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
@@ -461,7 +441,7 @@ import joblib
 import os
 
 # --- 1. Veri ve hedef ---
-X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_medium", "pH_category_optimal", "pH_category_basic"], axis=1)
+X = df.drop(["quality", "quality_cat", "quality_score", "alcohol_level_high"], axis=1)
 y = df["quality_cat"]
 
 le = LabelEncoder()
@@ -620,7 +600,3 @@ try:
         shap.summary_plot(shap_values, X_train_res, feature_names=X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)
-
-# --- 16. (Opsiyonel) Eğer varsa fonksiyonları ve diğer kod parçalarını da dahil et ---
-# Örneğin:
-# cat_cols, num_cols, cat_but_car = grab_col_names(df)

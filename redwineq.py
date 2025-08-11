@@ -15,10 +15,8 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
-try:
-    df = pd.read_csv("datasets/winequality-red.csv", encoding="utf-8")
-except UnicodeDecodeError:
-    df = pd.read_csv("datasets/winequality-red.csv", encoding="latin1")
+df = pd.read_csv("winequality-red.csv",encoding="latin1", sep=";", error_bad_lines=False)
+
 ############################# FEATURE ENGINEERING #############################
 df['quality_cat'] = pd.cut(df['quality'],
                            bins=[2, 4, 6, 9],
@@ -532,12 +530,12 @@ if hasattr(rf_best, 'feature_importances_'):
     plt.figure(figsize=(10, 6))
     sns.barplot(x=feat_imp.values, y=feat_imp.index)
     plt.title("Feature Importances")
-    plt.show()
+    plt.show(block=True)
 
 # --- 13. SHAP Analizi (low_quality sınıfı için) ---
 try:
     explainer = shap.TreeExplainer(rf_best)
-    shap_values = explainer.shap_values(X_train_res[:100])
-    shap.summary_plot(shap_values[0], X_train_res[:100], feature_names=X.columns)
+    shap_values = explainer.shap_values(X_train_res)
+    shap.summary_plot(shap_values[0], X_train_res, columns = X.columns)
 except Exception as e:
     print("SHAP çalıştırılırken hata oluştu:", e)

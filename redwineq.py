@@ -16,7 +16,7 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 pd.set_option('display.width', 500)
 
-df = pd.read_csv("winequality-red.csv")
+df = pd.read_csv("datasets/winequality-red.csv")
 df.head()
 
 ############################# FEATURE ENGINEERING #############################
@@ -33,12 +33,8 @@ df['alcohol_level'] = pd.cut(df['alcohol'],  bins=[8.39, 9.5, 11.1, 14.91],
 df['alcohol_level'].value_counts()
 df.groupby('alcohol_level',observed=False)['quality'].mean()
 
-df['pH_category'] = pd.cut(
-    df['pH'],
-    bins=[2.7, 3.21, 3.4, 4.1],
-    labels=['acidic', 'optimal', 'basic'],
-include_lowest=True
-)#Orta veya yüksek asidite = iyi bir şarap
+median_ph = df["pH"].median()
+df["pH_category"] = df["pH"].apply(lambda x: "low_ph" if x <= median_ph else "high_ph")
 
 df['pH_category'].value_counts()
 df.groupby('pH_category',observed=False)['quality'].mean()
@@ -329,8 +325,21 @@ plt.show(block=True)
 df.apply(lambda x: x.fillna(x.mode()[0]) if (x.dtype == "category" and len(x.unique()) <= 10) else x, axis=0).isnull().sum()
 
 ############################ ENCODING SCALING ############################
+def label_encoder(dataframe, binary_col):
+    labelencoder = LabelEncoder()
+    dataframe[binary_col] = labelencoder.fit_transform(dataframe[binary_col])
+    return dataframe
 
-ohe_cols = [col for col in df.columns if 10 >= df[col].nunique() > 2 and col != 'quality_cat' and col != "quality"]
+binary_cols = [col for col in df.columns if df[col].dtype not in [int, float]
+               and df[col].nunique() == 2]
+
+for col in binary_cols:
+    label_encoder(df, col)
+
+df.head()
+
+#One Hot Encoding
+ohe_cols = [col for col in df.columns if 10 >= df[col].nunique() > 2 and col != "quality"]
 # one_hot_encoding sütunları
 
 def one_hot_encoder(dataframe, categorical_cols, drop_first=True):
@@ -376,16 +385,15 @@ def find_useless_binary_cols(dataframe, target, rare_thresh=0.05, effect_thresh=
 useless_cols = find_useless_binary_cols(df, "quality_binary")
 print("Gereksiz sütunlar:", useless_cols)
 df.head()
-
 drop_cols = [
     "alcohol_level_medium",
-    "pH_category_optimal",
-    "pH_category_basic",
+    "alcohol_level_high"
 ]
 
 df.drop(columns=drop_cols, axis=1,inplace=True)
 
 df.shape
+df.head()
 df.to_csv("winequality-red-processed.csv", index=False)
 
 
@@ -409,7 +417,7 @@ import joblib
 import numpy as np
 
 # 1. Özellik ve hedef değişkenleri ayır
-X = df.drop(columns=["quality", "quality_binary", "alcohol_level_high"])  # quality ve belirttiğin sütunlar hariç
+X = df.drop(columns=["quality", "quality_binary","pH_category"])  # quality sütunları hariç
 y = df["quality_binary"]
 
 # 2. Eğitim ve test verilerini ayır (stratify ile sınıf dengesini koru)
@@ -563,4 +571,22 @@ plt.title('Learning Curve')
 plt.legend()
 plt.show(block=True)
 
+
+# Feature Importance (özellik önemini) görselleştirme - sadece Random Forest için
+importances = best_rf.feature_importances_
+features = X.columns
+
+# Importance değerlerini ve özellik isimlerini bir DataFrame'e koy
+feat_imp_df = pd.DataFrame({
+    'Feature': features,
+    'Importance': importances
+}).sort_values(by='Importance', ascending=False)
+
+plt.figure(figsize=(10, 6))
+sns.barplot(x='Importance', y='Feature', data=feat_imp_df.head(10))
+plt.title('Top 10 Özellik Önemi - Random Forest')
+plt.xlabel('Özellik Önemi')
+plt.ylabel('Özellikler')
+plt.tight_layout()
+plt.show(block=True)
 

@@ -24,8 +24,6 @@ st.dataframe(df.head())
 
 
 # -- METRİK KARTLARI --
-st.subheader("🔍 Temel İstatistikler")
-
 st.subheader("📌 Temel İstatistikler")
 
 col1, col2, col3, col4 = st.columns(4)
